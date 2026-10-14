@@ -74,7 +74,7 @@ Before tagging, run the installer's end-to-end check on a copy of a store on eac
 ../magento-patch-installer/tests/e2e-local.sh ~/Development/Sites/Magento/isodin-flex2
 ```
 
-It installs this package in a copy, checks that every patch is in place, that Adobe's `vendor/bin/patch-status` lists nothing missing, and that a reinstalled core package is patched again. Then tag with the date, such as `2026.10.14`.
+It installs this package in a copy, checks that every patch is in place, that Adobe's `vendor/bin/patch-status` lists nothing missing, and that a reinstalled core package is patched again. Then tag the next version: a minor version (`0.2.0`) for a new month of patches, a patch version (`0.1.1`) when Adobe re-issues or fixes a file. Renovate opens a merge request in every project for each tag, with the release notes listing the patches.
 
 ## License
 
