@@ -1,0 +1,12 @@
+diff --git a/vendor/magento/module-company/view/base/ui_component/company_form.xml b/vendor/magento/module-company/view/base/ui_component/company_form.xml
+index 0662bc7cafc4..d5b8f3eacea0 100644
+--- a/vendor/magento/module-company/view/base/ui_component/company_form.xml
++++ b/vendor/magento/module-company/view/base/ui_component/company_form.xml
+@@ -49,6 +49,7 @@
+         <settings>
+             <submitUrl path="company/index/save"/>
+         </settings>
++        <aclResource>Magento_Company::manage</aclResource>
+         <dataProvider class="Magento\Company\Model\Company\DataProvider" name="company_form_data_source">
+             <settings>
+                 <requestFieldName>id</requestFieldName>

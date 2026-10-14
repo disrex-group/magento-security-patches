@@ -1,0 +1,278 @@
+diff --git a/vendor/magento/module-gift-registry/Controller/View.php b/vendor/magento/module-gift-registry/Controller/View.php
+index 32d921f66754..6807f327406e 100644
+--- a/vendor/magento/module-gift-registry/Controller/View.php
++++ b/vendor/magento/module-gift-registry/Controller/View.php
+@@ -18,6 +18,12 @@
+
+ use Magento\Framework\Exception\NotFoundException;
+ use Magento\Framework\App\RequestInterface;
++use Magento\Framework\App\Action\Context;
++use Magento\Framework\Registry;
++use Magento\GiftRegistry\Model\Entity;
++use Magento\GiftRegistry\Model\EntityFactory;
++use Magento\Framework\App\ObjectManager;
++use Magento\GiftRegistry\Helper\Data;
+ 
+ /**
+  * Gift registry frontend controller
+@@ -25,21 +31,28 @@
+ abstract class View extends \Magento\Framework\App\Action\Action
+ {
+     /**
+-     * Core registry
+-     *
+-     * @var \Magento\Framework\Registry
++     * @var Registry
+      */
+     protected $_coreRegistry = null;
+ 
+     /**
+-     * @param \Magento\Framework\App\Action\Context $context
+-     * @param \Magento\Framework\Registry $coreRegistry
++     * @var Entity
++     */
++    protected $_entity;
++
++    /**
++     * @param Context $context
++     * @param Registry $coreRegistry
++     * @param EntityFactory|null $entityFactory
+      */
+     public function __construct(
+-        \Magento\Framework\App\Action\Context $context,
+-        \Magento\Framework\Registry $coreRegistry
++        Context $context,
++        Registry $coreRegistry,
++        ?EntityFactory $entityFactory = null
+     ) {
+         $this->_coreRegistry = $coreRegistry;
++        $entityFactory = $entityFactory ?? ObjectManager::getInstance()->get(EntityFactory::class);
++        $this->_entity = $entityFactory->create();
+         parent::__construct($context);
+     }
+ 
+@@ -53,6 +66,6 @@ public function __construct(
+     public function dispatch(RequestInterface $request)
+     {
+-        if (!$this->_objectManager->get(\Magento\GiftRegistry\Helper\Data::class)->isEnabled()) {
++        if (!$this->_objectManager->get(Data::class)->isEnabled()) {
+             throw new NotFoundException(__('Page not found.'));
+         }
+         return parent::dispatch($request);
+diff --git a/vendor/magento/module-gift-registry/Controller/View/AddToCart.php b/vendor/magento/module-gift-registry/Controller/View/AddToCart.php
+index 47d900ce5130..a41d7b35a768 100644
+--- a/vendor/magento/module-gift-registry/Controller/View/AddToCart.php
++++ b/vendor/magento/module-gift-registry/Controller/View/AddToCart.php
+@@ -17,36 +17,53 @@
+ namespace Magento\GiftRegistry\Controller\View;
+ 
+-class AddToCart extends \Magento\GiftRegistry\Controller\View
++use Magento\Framework\App\Action\HttpPostActionInterface;
++use Magento\Checkout\Model\Cart;
++use Magento\GiftRegistry\Model\Item;
++use Magento\GiftRegistry\Model\Item\Option;
++use Magento\Framework\Exception\LocalizedException;
++use Exception;
++use Psr\Log\LoggerInterface;
++
++class AddToCart extends \Magento\GiftRegistry\Controller\View implements HttpPostActionInterface
+ {
+     /**
+      * Add specified gift registry items to quote
+      *
+      * @return void
+      * @SuppressWarnings(PHPMD.CyclomaticComplexity)
+      */
+     public function execute()
+     {
++        $entity = $this->_entity->loadByUrlKey($this->getRequest()->getParam('id'));
++        if (!$entity->getId() || !$entity->getCustomerId() || !$entity->getTypeId() || !$entity->getIsActive()) {
++            $this->_forward('noroute');
++            return;
++        }
+         $items = $this->getRequest()->getParam('items');
+         if (!$items) {
+             $this->_redirect('*/*', ['_current' => true]);
+             return;
+         }
+-        /* @var \Magento\Checkout\Model\Cart */
+-        $cart = $this->_objectManager->get(\Magento\Checkout\Model\Cart::class);
++        $cart = $this->_objectManager->get(Cart::class);
+ 
+         $success = false;
+ 
+         try {
+             $count = 0;
+             foreach ($items as $itemId => $itemInfo) {
+-                $item = $this->_objectManager->create(\Magento\GiftRegistry\Model\Item::class)->load($itemId);
++                $item = $this->_objectManager->create(Item::class)->load($itemId);
+                 $optionCollection = $this->_objectManager->create(
+-                    \Magento\GiftRegistry\Model\Item\Option::class
++                    Option::class
+                 )->getCollection()->addItemFilter(
+                     $itemId
+                 );
+                 $item->setOptions($optionCollection->getOptionsByItem($item));
+-                if (!$item->getId() || $itemInfo['qty'] < 1 || $item->getQty() <= $item->getQtyFulfilled()) {
++                if (!$item->getId()
++                    || (int)$item->getEntityId() !== (int)$entity->getId()
++                    || !isset($itemInfo['qty'])
++                    || $itemInfo['qty'] < 1
++                    || $item->getQty() <= $item->getQtyFulfilled()
++                ) {
+                     continue;
+                 }
+                 $item->addToCart($cart, $itemInfo['qty']);
+@@ -58,11 +75,11 @@ public function execute()
+                 $success = false;
+                 $this->messageManager->addError(__('Please enter the quantity of items to add to cart.'));
+             }
+-        } catch (\Magento\Framework\Exception\LocalizedException $e) {
++        } catch (LocalizedException $e) {
+             $this->messageManager->addError(__($e->getMessage()));
+-        } catch (\Exception $e) {
++        } catch (Exception $e) {
+             $this->messageManager->addException($e, __('We can\'t add this item to your shopping cart right now.'));
+-            $this->_objectManager->get(\Psr\Log\LoggerInterface::class)->critical($e);
++            $this->_objectManager->get(LoggerInterface::class)->critical($e);
+         }
+         if (!$success) {
+             $this->_redirect('*/*', ['_current' => true]);
+diff --git a/vendor/magento/module-gift-registry/Controller/View/Index.php b/vendor/magento/module-gift-registry/Controller/View/Index.php
+index 549f3a186f58..c7c4993fafa2 100644
+--- a/vendor/magento/module-gift-registry/Controller/View/Index.php
++++ b/vendor/magento/module-gift-registry/Controller/View/Index.php
+@@ -17,6 +17,9 @@
+ namespace Magento\GiftRegistry\Controller\View;
+ 
+-class Index extends \Magento\GiftRegistry\Controller\View
++use Magento\Customer\Model\Customer;
++use Magento\Framework\App\Action\HttpGetActionInterface;
++
++class Index extends \Magento\GiftRegistry\Controller\View implements HttpGetActionInterface
+ {
+     /**
+      * View giftregistry list in 'My Account' section
+@@ -26,14 +29,13 @@ class Index extends \Magento\GiftRegistry\Controller\View
+     public function execute()
+     {
+-        $entity = $this->_objectManager->create(\Magento\GiftRegistry\Model\Entity::class);
+-        $entity->loadByUrlKey($this->getRequest()->getParam('id'));
++        $entity = $this->_entity->loadByUrlKey($this->getRequest()->getParam('id'));
+         if (!$entity->getId() || !$entity->getCustomerId() || !$entity->getTypeId() || !$entity->getIsActive()) {
+             $this->_forward('noroute');
+             return;
+         }
+ 
+-        /** @var \Magento\Customer\Model\Customer */
+-        $customer = $this->_objectManager->create(\Magento\Customer\Model\Customer::class);
++        /** @var Customer */
++        $customer = $this->_objectManager->create(Customer::class);
+         $customer->load($entity->getCustomerId());
+         $entity->setCustomer($customer);
+         $this->_coreRegistry->register('current_entity', $entity);
+diff --git a/vendor/magento/module-versions-cms/Block/Adminhtml/Cms/Hierarchy/Widget/Chooser.php b/vendor/magento/module-versions-cms/Block/Adminhtml/Cms/Hierarchy/Widget/Chooser.php
+index ba7839071533..893abd0e20d7 100644
+--- a/vendor/magento/module-versions-cms/Block/Adminhtml/Cms/Hierarchy/Widget/Chooser.php
++++ b/vendor/magento/module-versions-cms/Block/Adminhtml/Cms/Hierarchy/Widget/Chooser.php
+@@ -17,5 +17,8 @@
+ namespace Magento\VersionsCms\Block\Adminhtml\Cms\Hierarchy\Widget;
+ 
++use Magento\Framework\App\ObjectManager;
++use Magento\Framework\Serialize\Serializer\JsonHexTag;
++
+ /**
+  * Class Chooser
+  * Cms Pages Hierarchy Grid Block
+@@ -41,5 +44,10 @@ class Chooser extends \Magento\Backend\Block\Template
+     protected $_jsonEncoder;
+ 
++    /**
++     * @var JsonHexTag
++     */
++    private JsonHexTag $jsonHexTagSerializer;
++
+     /**
+      * Path to template file in theme.
+      *
+@@ -54,15 +62,19 @@ class Chooser extends \Magento\Backend\Block\Template
+      * @param \Magento\Framework\Json\EncoderInterface $jsonEncoder
+      * @param \Magento\VersionsCms\Model\Hierarchy\NodeFactory $nodeFactory
+      * @param array $data
++     * @param JsonHexTag|null $jsonHexTagSerializer
+      */
+     public function __construct(
+         \Magento\Backend\Block\Template\Context $context,
+         \Magento\Framework\Json\EncoderInterface $jsonEncoder,
+         \Magento\VersionsCms\Model\Hierarchy\NodeFactory $nodeFactory,
+-        array $data = []
++        array $data = [],
++        ?JsonHexTag $jsonHexTagSerializer = null
+     ) {
+         $this->_jsonEncoder = $jsonEncoder;
+         $this->_nodeFactory = $nodeFactory;
++        $this->jsonHexTagSerializer = $jsonHexTagSerializer
++            ?? ObjectManager::getInstance()->get(JsonHexTag::class);
+         parent::__construct($context, $data);
+     }
+ 
+@@ -125,6 +137,6 @@ public function prepareElementHtml(\Magento\Framework\Data\Form\Element\Abstract
+     public function getNodesJson()
+     {
+-        return $this->_jsonEncoder->encode($this->getNodes());
++        return $this->jsonHexTagSerializer->serialize($this->getNodes());
+     }
+ 
+     /**
+@@ -169,8 +181,8 @@ public function getCMSHierarchyTree($tree): string
+     {
+         $html = "<ul>";
+         foreach ($tree as $category) {
+-            $html .= "<li id='" . $category['node_id'] . "' >";
+-            $html .= "<span>" . $category['label'] . "</span>";
++            $html .= "<li id='" . $this->_escaper->escapeHtmlAttr($category['node_id']) . "' >";
++            $html .= "<span>" . $this->_escaper->escapeHtml($category['label']) . "</span>";
+             if (array_key_exists("children", $category)) {
+                 $html .= $this->getCMSHierarchyTree($category["children"]);
+             }
+diff --git a/vendor/magento/module-versions-cms/view/adminhtml/templates/hierarchy/edit.phtml b/vendor/magento/module-versions-cms/view/adminhtml/templates/hierarchy/edit.phtml
+index cf6f069b6a6d..a92d218c689c 100644
+--- a/vendor/magento/module-versions-cms/view/adminhtml/templates/hierarchy/edit.phtml
++++ b/vendor/magento/module-versions-cms/view/adminhtml/templates/hierarchy/edit.phtml
+@@ -124,7 +124,8 @@ $hierarchyHelper = $block->getData('hierarchyHelper');
+                     jQuery(directoryTreeSelector).jstree({
+                         core: {
+                             data: this.treeRoot,
+-                            check_callback: true
++                            check_callback: true,
++                            force_text: true
+                         },
+                         plugins : [ 'dnd' ]
+                     });
+@@ -269,7 +270,7 @@ $hierarchyHelper = $block->getData('hierarchyHelper');
+ 
+                 getEditPageAnchorHtml: function(pageId, pageTitle) {
+                     var editUrl = '<a href="{$editPageUrl}page_id/';
+-                    return editUrl + pageId + '/" target="_blank">' + pageTitle + '</a>';
++                    return editUrl + pageId + '/" target="_blank">' + pageTitle.escapeHTML() + '</a>';
+                 },
+ 
+                 getNodePreviewUrlInfo: function(node) {
+@@ -369,7 +370,7 @@ script;
+                             $('node_preview').up('.field').show();
+                             $('node_preview').writeAttribute('target', '_blank');
+                             $('node_preview').writeAttribute('href', nodeUrlInfo.url);
+-                            $('node_preview').innerHTML = nodeUrlInfo.path;
++                            $('node_preview').textContent = nodeUrlInfo.path;
+                         }
+                     } else {
+                         $('node_preview').up('.field').hide();
+@@ -383,7 +384,7 @@ script;
+                             node.original.page_id,
+                             node.text.replace('\'', '&#039;').replace('"', '&quot;')
+                         );
+-                        $('node_identifier_text').innerHTML = node.original.identifier;
++                        $('node_identifier_text').textContent = node.original.identifier;
+                     }
+ 
+                     this.nodePropReset();

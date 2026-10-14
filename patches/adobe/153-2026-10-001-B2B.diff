@@ -1,0 +1,164 @@
+diff --git a/vendor/magento/module-company/Model/SaveValidator/SanitizeRegion.php b/vendor/magento/module-company/Model/SaveValidator/SanitizeRegion.php
+new file mode 100644
+index 000000000000..4592ab614d06
+--- /dev/null
++++ b/vendor/magento/module-company/Model/SaveValidator/SanitizeRegion.php
+@@ -0,0 +1,53 @@
++<?php
++/**
++ * ADOBE CONFIDENTIAL
++ *
++ * Copyright 2026 Adobe
++ * All Rights Reserved.
++ *
++ * NOTICE: All information contained herein is, and remains
++ * the property of Adobe and its suppliers, if any. The intellectual
++ * and technical concepts contained herein are proprietary to Adobe
++ * and its suppliers and are protected by all applicable intellectual
++ * property laws, including trade secret and copyright laws.
++ * Dissemination of this information or reproduction of this material
++ * is strictly forbidden unless prior written permission is obtained
++ * from Adobe.
++ */
++declare(strict_types=1);
++
++namespace Magento\Company\Model\SaveValidator;
++
++use Magento\Company\Api\Data\CompanyInterface;
++use Magento\Company\Model\SaveValidatorInterface;
++use Magento\Framework\Filter\StripTags;
++
++/**
++ * Sanitizes the company region value.
++ */
++class SanitizeRegion implements SaveValidatorInterface
++{
++    /**
++     * @param CompanyInterface $company
++     * @param StripTags $stripTags
++     */
++    public function __construct(
++        private readonly CompanyInterface $company,
++        private readonly StripTags $stripTags
++    ) {
++    }
++
++    /**
++     * @inheritdoc
++     */
++    public function execute()
++    {
++        $region = $this->company->getRegion();
++        if (empty($region)) {
++            return;
++        }
++
++        $sanitized = trim($this->stripTags->filter($region));
++        $this->company->setRegion($sanitized);
++    }
++}
+diff --git a/vendor/magento/module-company/Plugin/Customer/Api/CustomerRepository/SaveCompanies.php b/vendor/magento/module-company/Plugin/Customer/Api/CustomerRepository/SaveCompanies.php
+index 10ef91a8e6b0..259682d5c60e 100644
+--- a/vendor/magento/module-company/Plugin/Customer/Api/CustomerRepository/SaveCompanies.php
++++ b/vendor/magento/module-company/Plugin/Customer/Api/CustomerRepository/SaveCompanies.php
+@@ -24,6 +24,7 @@
+ use Magento\Company\Model\ResourceModel\Customer as CompanyCustomerResource;
+ use Magento\Customer\Api\Data\CustomerInterface;
+ use Magento\Customer\Api\CustomerRepositoryInterface;
++use Magento\Framework\AuthorizationInterface;
+ use Magento\Framework\Exception\LocalizedException;
+ 
+ /**
+@@ -36,12 +37,14 @@ class SaveCompanies
+      * @param CompanyUserRepositoryInterface $companyUserRepository
+      * @param CompanyCustomerInterfaceFactory $companyCustomerInterfaceFactory
+      * @param CompanyCustomerResource $companyCustomerResource
++     * @param AuthorizationInterface $authorization
+      */
+     public function __construct(
+         private CompanyManagementInterface $companyManagement,
+         private CompanyUserRepositoryInterface $companyUserRepository,
+         private CompanyCustomerInterfaceFactory $companyCustomerInterfaceFactory,
+-        private CompanyCustomerResource $companyCustomerResource
++        private CompanyCustomerResource $companyCustomerResource,
++        private AuthorizationInterface $authorization
+     ) {
+     }
+ 
+@@ -63,7 +66,7 @@ public function beforeSave(
+         $customerId = $customer->getId();
+         $companyAttributes = $customer->getExtensionAttributes()->getAllCompanyAttributes();
+ 
+-        if (!$customerId || !$companyAttributes) {
++        if (!$customerId || !$companyAttributes || !$this->isAuthorizedToManageCompany()) {
+             return [$customer, $passwordHash];
+         }
+ 
+@@ -88,6 +91,17 @@ public function beforeSave(
+         return [$customer, $passwordHash];
+     }
+ 
++    /**
++     * Check whether current user is authorized to manage customers and companies.
++     *
++     * @return bool
++     */
++    private function isAuthorizedToManageCompany(): bool
++    {
++        return $this->authorization->isAllowed('Magento_Customer::manage')
++            || $this->authorization->isAllowed('Magento_Company::manage');
++    }
++
+     /**
+      * Prepare attribute data to be accessed by respective company's id
+      *
+diff --git a/vendor/magento/module-company/Ui/Component/Form/Field/Company/Options.php b/vendor/magento/module-company/Ui/Component/Form/Field/Company/Options.php
+index 03a00baae34b..697e740ee075 100644
+--- a/vendor/magento/module-company/Ui/Component/Form/Field/Company/Options.php
++++ b/vendor/magento/module-company/Ui/Component/Form/Field/Company/Options.php
+@@ -106,7 +106,8 @@ private function formatItems(array $searchResult): array
+             return [
+                 'label' => $company->getCompanyName(),
+                 'value' => $company->getId(),
+-                'text' => sprintf('%s, %s', $company->getCountryId(), $region)
++                'text' => sprintf('%s, %s', $company->getCountryId(), $region),
++                '__disableTmpl' => true
+             ];
+         }, $searchResult);
+     }
+diff --git a/vendor/magento/module-company/etc/di.xml b/vendor/magento/module-company/etc/di.xml
+index 2ab47c94a40c..b769de761d5b 100644
+--- a/vendor/magento/module-company/etc/di.xml
++++ b/vendor/magento/module-company/etc/di.xml
+@@ -46,6 +46,7 @@
+                 <item name="companyId" xsi:type="string">\Magento\Company\Model\SaveValidator\CompanyId</item>
+                 <item name="requiredFields" xsi:type="string">\Magento\Company\Model\SaveValidator\RequiredFields</item>
+                 <item name="companyName" xsi:type="string">\Magento\Company\Model\SaveValidator\SanitizeCompanyName</item>
++                <item name="companyRegion" xsi:type="string">\Magento\Company\Model\SaveValidator\SanitizeRegion</item>
+                 <item name="salesRepresentative" xsi:type="string">\Magento\Company\Model\SaveValidator\SalesRepresentative</item>
+                 <item name="customerGroup" xsi:type="string">\Magento\Company\Model\SaveValidator\CustomerGroup</item>
+                 <item name="companyStatus" xsi:type="string">\Magento\Company\Model\SaveValidator\CompanyStatus</item>
+diff --git a/vendor/magento/module-purchase-order-rule/Plugin/Customer/Authorization/ApproveRejectPurchaseOrderPlugin.php b/vendor/magento/module-purchase-order-rule/Plugin/Customer/Authorization/ApproveRejectPurchaseOrderPlugin.php
+index d802d0201dec..d5d19c82b9ff 100644
+--- a/vendor/magento/module-purchase-order-rule/Plugin/Customer/Authorization/ApproveRejectPurchaseOrderPlugin.php
++++ b/vendor/magento/module-purchase-order-rule/Plugin/Customer/Authorization/ApproveRejectPurchaseOrderPlugin.php
+@@ -119,6 +119,7 @@ public function afterIsAllowed(ApproveRejectPurchaseOrder $subject, $result, $pu
+         if ($companyId
+             && $this->companyAdminPermission->isGivenUserCompanyAdmin($customerId, $companyId)
+             && $this->companyStructure->getAllowedChildrenIds((int)$customerId)
++            && (int) $purchaseOrder->getCompanyId() === $companyId
+         ) {
+             return true;
+         }
+diff --git a/vendor/magento/module-purchase-order-rule/Plugin/Customer/Authorization/ViewPurchaseOrderPlugin.php b/vendor/magento/module-purchase-order-rule/Plugin/Customer/Authorization/ViewPurchaseOrderPlugin.php
+index 49e1fbbe6e5c..7e3a1abfacc6 100644
+--- a/vendor/magento/module-purchase-order-rule/Plugin/Customer/Authorization/ViewPurchaseOrderPlugin.php
++++ b/vendor/magento/module-purchase-order-rule/Plugin/Customer/Authorization/ViewPurchaseOrderPlugin.php
+@@ -123,6 +123,7 @@ public function afterIsAllowed(ViewPurchaseOrder $subject, $result, $purchaseOrd
+         if ($companyId
+             && $this->companyAdminPermission->isGivenUserCompanyAdmin($customerId, $companyId)
+             && $this->companyStructure->getAllowedChildrenIds((int)$customerId)
++            && (int) $purchaseOrder->getCompanyId() === $companyId
+         ) {
+             return true;
+         }

@@ -1,0 +1,255 @@
+diff --git a/vendor/magento/module-company/Model/CompanyFieldPool.php b/vendor/magento/module-company/Model/CompanyFieldPool.php
+new file mode 100644
+index 000000000000..114b1f48de30
+--- /dev/null
++++ b/vendor/magento/module-company/Model/CompanyFieldPool.php
+@@ -0,0 +1,43 @@
++<?php
++/**
++ * ADOBE CONFIDENTIAL
++ *
++ * Copyright 2026 Adobe
++ * All Rights Reserved.
++ *
++ * NOTICE: All information contained herein is, and remains
++ * the property of Adobe and its suppliers, if any. The intellectual
++ * and technical concepts contained herein are proprietary to Adobe
++ * and its suppliers and are protected by all applicable intellectual
++ * property laws, including trade secret and copyright laws.
++ * Dissemination of this information or reproduction of this material
++ * is strictly forbidden unless prior written permission is obtained
++ * from Adobe.
++ */
++declare(strict_types=1);
++
++namespace Magento\Company\Model;
++
++/**
++ * Holds an ordered list of field names declared via di.xml.
++ */
++class CompanyFieldPool
++{
++    /**
++     * @param string[] $fields
++     */
++    public function __construct(
++        private readonly array $fields = []
++    ) {
++    }
++
++    /**
++     * Get the fields for the company profile.
++     *
++     * @return string[]
++     */
++    public function getFields(): array
++    {
++        return array_values($this->fields);
++    }
++}
+diff --git a/vendor/magento/module-company/Model/CompanyProfile.php b/vendor/magento/module-company/Model/CompanyProfile.php
+index bf2d360827dd..107d14cacd82 100644
+--- a/vendor/magento/module-company/Model/CompanyProfile.php
++++ b/vendor/magento/module-company/Model/CompanyProfile.php
+@@ -56,12 +56,22 @@ class CompanyProfile
+      * @param CompanyContext $companyContext
+      * @param DataObjectHelper $objectHelper
+      * @param UserContextInterface $userContext
++     * @param CompanyFieldPool|null $companyProfileFieldPool
++     * @param CompanyFieldPool|null $companyAddressFieldPool
+      */
+     public function __construct(
+         private readonly CompanyContext $companyContext,
+         private readonly DataObjectHelper $objectHelper,
+         private readonly UserContextInterface $userContext,
++        ?CompanyFieldPool $companyProfileFieldPool = null,
++        ?CompanyFieldPool $companyAddressFieldPool = null,
+     ) {
++        if ($companyProfileFieldPool !== null) {
++            $this->companyProfileFields = $companyProfileFieldPool->getFields();
++        }
++        if ($companyAddressFieldPool !== null) {
++            $this->companyAddressFields = $companyAddressFieldPool->getFields();
++        }
+     }
+ 
+     /**
+@@ -93,16 +103,13 @@ public function filterDataBasedOnCompanyAclPermissions(array $data): array
+             // company ACL permissions only apply in the storefront customer context
+             return $data;
+         }
+-        if (!$this->companyContext->isResourceAllowed('Magento_Company::edit_account')) {
+-            foreach ($this->companyProfileFields as $field) {
+-                unset($data[$field]);
+-            }
++        $allowedFields = [];
++        if ($this->companyContext->isResourceAllowed('Magento_Company::edit_account')) {
++            $allowedFields = array_merge($allowedFields, $this->companyProfileFields);
+         }
+-        if (!$this->companyContext->isResourceAllowed('Magento_Company::edit_address')) {
+-            foreach ($this->companyAddressFields as $field) {
+-                unset($data[$field]);
+-            }
++        if ($this->companyContext->isResourceAllowed('Magento_Company::edit_address')) {
++            $allowedFields = array_merge($allowedFields, $this->companyAddressFields);
+         }
+-        return $data;
++        return array_intersect_key($data, array_flip($allowedFields));
+     }
+ }
+diff --git a/vendor/magento/module-company/etc/di.xml b/vendor/magento/module-company/etc/di.xml
+old mode 100755
+new mode 100644
+index 6b2ff9b1bcbb..fc9922cba5a3
+--- a/vendor/magento/module-company/etc/di.xml
++++ b/vendor/magento/module-company/etc/di.xml
+@@ -366,4 +366,34 @@
+     <type name="Magento\Customer\Model\Group\Resolver">
+         <plugin name="companyCustomerGroupResolver" type="Magento\Company\Plugin\Customer\Model\Group\ResolverPlugin"/>
+     </type>
++    <virtualType name="companyProfileFieldPool" type="Magento\Company\Model\CompanyFieldPool">
++        <arguments>
++            <argument name="fields" xsi:type="array">
++                <item name="company_name" xsi:type="string">company_name</item>
++                <item name="legal_name" xsi:type="string">legal_name</item>
++                <item name="company_email" xsi:type="string">company_email</item>
++                <item name="vat_tax_id" xsi:type="string">vat_tax_id</item>
++                <item name="reseller_id" xsi:type="string">reseller_id</item>
++            </argument>
++        </arguments>
++    </virtualType>
++    <virtualType name="companyAddressFieldPool" type="Magento\Company\Model\CompanyFieldPool">
++        <arguments>
++            <argument name="fields" xsi:type="array">
++                <item name="street" xsi:type="string">street</item>
++                <item name="city" xsi:type="string">city</item>
++                <item name="country_id" xsi:type="string">country_id</item>
++                <item name="region_id" xsi:type="string">region_id</item>
++                <item name="region" xsi:type="string">region</item>
++                <item name="postcode" xsi:type="string">postcode</item>
++                <item name="telephone" xsi:type="string">telephone</item>
++            </argument>
++        </arguments>
++    </virtualType>
++    <type name="Magento\Company\Model\CompanyProfile">
++        <arguments>
++            <argument name="companyProfileFieldPool" xsi:type="object">companyProfileFieldPool</argument>
++            <argument name="companyAddressFieldPool" xsi:type="object">companyAddressFieldPool</argument>
++        </arguments>
++    </type>
+ </config>
+diff --git a/vendor/magento/module-company-graph-ql/Model/Company/UpdateCompanyAccount.php b/vendor/magento/module-company-graph-ql/Model/Company/UpdateCompanyAccount.php
+index 1978aa3a6b9b..18f7c8323876 100644
+--- a/vendor/magento/module-company-graph-ql/Model/Company/UpdateCompanyAccount.php
++++ b/vendor/magento/module-company-graph-ql/Model/Company/UpdateCompanyAccount.php
+@@ -23,8 +23,11 @@
+ use Magento\Company\Api\CompanyRepositoryInterface;
+ use Magento\Company\Api\Data\CompanyInterface;
+ use Magento\Company\Model\CompanyContext;
++use Magento\Company\Model\CompanyFieldPool;
+ use Magento\Company\Model\CompanyManagement;
+ use Magento\Framework\Api\DataObjectHelper;
++use Magento\Framework\App\ObjectManager;
++use Magento\Framework\GraphQl\Exception\GraphQlAuthorizationException;
+ use Magento\Framework\GraphQl\Exception\GraphQlInputException;
+ 
+ /**
+@@ -53,23 +56,32 @@ class UpdateCompanyAccount
+     private $companyManagement;
+ 
++    /**
++     * @var CompanyFieldPool
++     */
++    private readonly CompanyFieldPool $companyProfileFieldPool;
++
+     /**
+      * @param CompanyRepositoryInterface $companyRepository
+      * @param DataObjectHelper $dataObjectHelper
+      * @param PrepareCompanyData $prepareCompanyData
+      * @param CompanyManagement $companyManagement
+      * @param CompanyContext $companyContext
++     * @param CompanyFieldPool|null $companyProfileFieldPool
+      */
+     public function __construct(
+         CompanyRepositoryInterface $companyRepository,
+         DataObjectHelper $dataObjectHelper,
+         PrepareCompanyData $prepareCompanyData,
+         CompanyManagement $companyManagement,
+-        private readonly CompanyContext $companyContext
++        private readonly CompanyContext $companyContext,
++        ?CompanyFieldPool $companyProfileFieldPool = null,
+     ) {
+         $this->companyRepository = $companyRepository;
+         $this->dataObjectHelper = $dataObjectHelper;
+         $this->prepareCompanyData = $prepareCompanyData;
+         $this->companyManagement = $companyManagement;
++        $this->companyProfileFieldPool = $companyProfileFieldPool
++            ?? ObjectManager::getInstance()->get(CompanyFieldPool::class);
+     }
+ 
+     /**
+@@ -89,18 +101,22 @@ public function execute(array $data, int $customerId): CompanyInterface
+             );
+         }
+ 
+-        if (!$this->companyContext->isResourceAllowed('Magento_Company::edit_address')) {
+-            unset($data['legal_address']);
++        $allowedData = [];
++        if ($this->companyContext->isResourceAllowed('Magento_Company::edit_account')) {
++            $allowedData += array_intersect_key(
++                $data,
++                array_flip($this->companyProfileFieldPool->getFields())
++            );
+         }
+-
+-        if (!$this->companyContext->isResourceAllowed('Magento_Company::edit_account')) {
+-            unset($data['company_name']);
+-            unset($data['company_email']);
+-            unset($data['legal_name']);
+-            unset($data['vat_tax_id']);
+-            unset($data['reseller_id']);
++        if ($this->companyContext->isResourceAllowed('Magento_Company::edit_address')) {
++            if (array_key_exists('legal_address', $data)) {
++                $allowedData['legal_address'] = $data['legal_address'];
++            }
++        }
++        $companyData = $this->prepareCompanyData->execute($allowedData);
++        if (empty($companyData)) {
++            throw new GraphQlAuthorizationException(__('You are not authorized to perform this operation.'));
+         }
+-        $companyData = $this->prepareCompanyData->execute($data);
+         $this->dataObjectHelper->populateWithArray(
+             $company,
+             $companyData,
+diff --git a/vendor/magento/module-company-graph-ql/etc/di.xml b/vendor/magento/module-company-graph-ql/etc/di.xml
+new file mode 100644
+index 000000000000..69668b67a7a0
+--- /dev/null
++++ b/vendor/magento/module-company-graph-ql/etc/di.xml
+@@ -0,0 +1,26 @@
++<?xml version="1.0"?>
++<!--
++/**
++ * ADOBE CONFIDENTIAL
++ *
++ * Copyright 2026 Adobe
++ * All Rights Reserved.
++ *
++ * NOTICE: All information contained herein is, and remains
++ * the property of Adobe and its suppliers, if any. The intellectual
++ * and technical concepts contained herein are proprietary to Adobe
++ * and its suppliers and are protected by all applicable intellectual
++ * property laws, including trade secret and copyright laws.
++ * Dissemination of this information or reproduction of this material
++ * is strictly forbidden unless prior written permission is obtained
++ * from Adobe.
++ */
++-->
++<config xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="urn:magento:framework:ObjectManager/etc/config.xsd">
++    <!-- Write path shares only the profile pool. Address is gated by the GraphQL input schema. -->
++    <type name="Magento\CompanyGraphQl\Model\Company\UpdateCompanyAccount">
++        <arguments>
++            <argument name="companyProfileFieldPool" xsi:type="object">companyProfileFieldPool</argument>
++        </arguments>
++    </type>
++</config>

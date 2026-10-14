@@ -1,0 +1,39 @@
+{
+    "name": "disrex/magento-security-patches",
+    "description": "Adobe's isolated and out-of-band security patches for Magento Open Source, Adobe Commerce and B2B, taken unmodified from Adobe's patch registry and applied by disrex/magento-patch-installer",
+    "type": "library",
+    "license": "OSL-3.0",
+    "keywords": [
+        "magento",
+        "security",
+        "patches",
+        "apsb26-146",
+        "apsb26-153"
+    ],
+    "authors": [
+        {
+            "name": "Disrex",
+            "email": "support@disrex.nl",
+            "homepage": "https://disrex.nl"
+        }
+    ],
+    "homepage": "https://github.com/disrex-group/magento-security-patches",
+    "support": {
+        "issues": "https://github.com/disrex-group/magento-security-patches/issues",
+        "source": "https://github.com/disrex-group/magento-security-patches",
+        "docs": "https://disrex-group.github.io/magento-patch-installer/"
+    },
+    "require": {
+        "disrex/magento-patch-installer": "^0.1"
+    },
+    "conflict": {
+        "disrex/stylesmuggler-adobe-patches": "*"
+    },
+    "extra": {
+        "magento-patches": {
+            "include": [
+                "patches/adobe/patches.json"
+            ]
+        }
+    }
+}

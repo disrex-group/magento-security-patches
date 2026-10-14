@@ -1,0 +1,12 @@
+diff --git a/vendor/magento/module-reward/Block/Adminhtml/Customer/Edit/Tab/Reward/History/Grid/Column/Renderer/Reason.php b/vendor/magento/module-reward/Block/Adminhtml/Customer/Edit/Tab/Reward/History/Grid/Column/Renderer/Reason.php
+index 51e8402df92a..9066b59432d2 100644
+--- a/vendor/magento/module-reward/Block/Adminhtml/Customer/Edit/Tab/Reward/History/Grid/Column/Renderer/Reason.php
++++ b/vendor/magento/module-reward/Block/Adminhtml/Customer/Edit/Tab/Reward/History/Grid/Column/Renderer/Reason.php
+@@ -24,6 +24,6 @@ protected function _getValue(\Magento\Framework\DataObject $row)
+         if ($row->getData('is_duplicate_of') !== null) {
+             $expired = '<em>' . __('Expired reward') . '</em> ';
+         }
+-        return $expired . parent::_getValue($row);
++        return $expired . $this->escapeHtml((string)parent::_getValue($row));
+     }
+ }

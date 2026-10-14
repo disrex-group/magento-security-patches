@@ -1,0 +1,299 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+const REGISTRY_URL = 'https://repo.magento.com/patch/patch-registry.json';
+
+$root = dirname(__DIR__);
+$patchDir = $root . '/patches/adobe';
+$snapshot = $root . '/registry/patch-registry.json';
+
+$options = getopt('', ['registry:', 'offline']);
+$offline = isset($options['offline']);
+
+$raw = isset($options['registry']) ? file_get_contents($options['registry']) : fetch(REGISTRY_URL);
+if ($raw === null || $raw === false) {
+    fail('could not read the registry');
+}
+$registry = json_decode($raw, true);
+if (!is_array($registry) || !isset($registry['patches']) || !is_array($registry['patches'])) {
+    fail('the registry is not the expected JSON');
+}
+
+$areaPackages = areaPackages($registry['_areas'] ?? []);
+$patches = $registry['patches'];
+ksort($patches);
+foreach ($patches as $id => $patch) {
+    if (!isset($areaPackages[$patch['area'] ?? ''])) {
+        fail(sprintf('%s: area "%s" is not in the registry\'s _areas', $id, $patch['area'] ?? ''));
+    }
+}
+
+$available = [];
+$unavailable = [];
+foreach ($patches as $id => $patch) {
+    $name = basename((string) $patch['file_name']);
+    $target = $patchDir . '/' . $name;
+    $expected = strtolower((string) $patch['sha256']);
+
+    if (is_file($target) && hash_file('sha256', $target) === $expected) {
+        $available[$id] = $name;
+        continue;
+    }
+    if ($offline) {
+        $unavailable[$id] = is_file($target) ? 'sha256 differs from the registry' : 'not downloaded';
+        continue;
+    }
+    $missing = array_values(array_intersect($patch['requires'] ?? [], array_keys($unavailable)));
+    if ($missing !== []) {
+        $unavailable[$id] = "needs {$missing[0]}, which is not available";
+        continue;
+    }
+
+    $body = fetch('https://repo.magento.com/patch/' . rawurlencode($name));
+    if ($body === null) {
+        $unavailable[$id] = 'Adobe does not serve it without a Commerce licence';
+        continue;
+    }
+    // A re-issued patch keeps its id and file name, so only the hash shows it changed.
+    if (hash('sha256', $body) !== $expected) {
+        fail(sprintf('%s: sha256 of the download does not match the registry, refusing it', $name));
+    }
+    echo (is_file($target) ? 'updated  ' : 'added    ') . $name . "\n";
+    file_put_contents($target, $body);
+    $available[$id] = $name;
+}
+
+$blocked = blockedByMissingPrerequisites($patches, $available);
+foreach (array_keys($blocked) as $id) {
+    @unlink($patchDir . '/' . $available[$id]);
+    unset($available[$id]);
+}
+$unavailable += $blocked;
+
+$manifest = ['patches' => [], 'lines' => []];
+$monthly = [];
+foreach ($available as $id => $name) {
+    $patch = $patches[$id];
+    if (strpos($id, 'VULN-') !== false) {
+        $manifest['patches'][] = [
+            'id' => $id,
+            'label' => vulnLabel($id),
+            'source' => $name,
+            'base' => [$areaPackages[$patch['area']] => implode(' || ', $patch['applies_to'])],
+            'description' => description($patch),
+        ];
+        continue;
+    }
+    if (count($patch['applies_to']) !== 1) {
+        fail(sprintf('%s: a monthly patch for more than one base version is new, check the line layout', $id));
+    }
+    $monthly[$patch['area']][$patch['applies_to'][0]][$id] = $patch;
+}
+
+ksort($monthly);
+$lineCount = 0;
+foreach ($monthly as $area => $versions) {
+    uksort($versions, 'version_compare');
+    foreach ($versions as $base => $line) {
+        foreach ($line as $id => $patch) {
+            $foreign = array_diff($patch['requires'] ?? [], array_keys($line));
+            if ($foreign !== []) {
+                fail(sprintf('%s requires %s from another line, which a cumulative line cannot express', $id, implode(', ', $foreign)));
+            }
+        }
+        $manifest['lines'][lineName($area, $base)] = [
+            'base' => [$areaPackages[$area] => $base],
+        'cumulative' => true,
+        'patches' => array_map(
+            static fn (string $id): array => [
+                'id' => monthlyId($id),
+                'label' => monthlyLabel($patches[$id]),
+                'source' => $available[$id],
+                'description' => description($patches[$id]),
+            ],
+            chainOrder($line)
+        ),
+    ];
+        $lineCount++;
+    }
+}
+
+file_put_contents($patchDir . '/patches.json', json_encode($manifest, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");
+file_put_contents($snapshot, $raw);
+
+$known = array_flip(array_map(static fn (array $p): string => basename((string) $p['file_name']), $patches));
+foreach (glob($patchDir . '/*.diff') ?: [] as $file) {
+    if (!isset($known[basename($file)])) {
+        echo 'stale    ' . basename($file) . " is no longer in the registry, remove it by hand\n";
+    }
+}
+foreach ($unavailable as $id => $reason) {
+    echo "skipped  $id: $reason\n";
+}
+$perArea = array_count_values(array_map(static fn (string $id): string => $patches[$id]['area'], array_keys($available)));
+ksort($perArea);
+printf(
+    "%d patches declared (%s), %d lines, %d skipped\n",
+    count($available),
+    implode(', ', array_map(static fn (string $a, int $n): string => "$a $n", array_keys($perArea), $perArea)),
+    $lineCount,
+    count($unavailable)
+);
+
+function fetch(string $url): ?string
+{
+    $handle = curl_init($url);
+    curl_setopt_array($handle, [
+        CURLOPT_RETURNTRANSFER => true,
+        // Adobe answers a licence-gated file with a redirect to a login page, so
+        // following it would hand back HTML with a 200.
+        CURLOPT_FOLLOWLOCATION => false,
+        CURLOPT_TIMEOUT => 60,
+        CURLOPT_FAILONERROR => false,
+    ]);
+    $body = curl_exec($handle);
+    $status = curl_getinfo($handle, CURLINFO_RESPONSE_CODE);
+
+    if ($status === 200 && is_string($body)) {
+        return $body;
+    }
+    if (in_array($status, [302, 401, 403], true)) {
+        return null;
+    }
+    // Skipping on a timeout or a 5xx would drop the patch and every month after
+    // it from the chain, and verify would still report the store as patched.
+    fail(sprintf('%s: HTTP %d %s, try again later', $url, $status, curl_error($handle)));
+}
+
+/**
+ * @param array<string, array<string, mixed>> $patches
+ * @param array<string, string> $available
+ * @return array<string, string>
+ */
+function blockedByMissingPrerequisites(array $patches, array $available): array
+{
+    $blocked = [];
+    do {
+        $changed = false;
+        foreach ($available as $id => $name) {
+            if (isset($blocked[$id])) {
+                continue;
+            }
+            foreach ($patches[$id]['requires'] ?? [] as $required) {
+                if (!isset($available[$required]) || isset($blocked[$required])) {
+                    $blocked[$id] = "needs $required, which is not available";
+                    $changed = true;
+                    break;
+                }
+            }
+        }
+    } while ($changed);
+
+    return $blocked;
+}
+
+/**
+ * @param array<string, array<string, mixed>> $line
+ * @return string[]
+ */
+function chainOrder(array $line): array
+{
+    $ordered = [];
+    while (count($ordered) < count($line)) {
+        $next = null;
+        foreach ($line as $id => $patch) {
+            if (in_array($id, $ordered, true)) {
+                continue;
+            }
+            $requires = array_values(array_intersect($patch['requires'] ?? [], array_keys($line)));
+            if (array_diff($requires, $ordered) === []) {
+                if ($next !== null) {
+                    fail(sprintf('%s and %s could both come next, the chain is not linear', $next, $id));
+                }
+                $next = $id;
+            }
+        }
+        if ($next === null) {
+            fail('the requires in line ' . implode(', ', array_keys($line)) . ' form a cycle');
+        }
+        $ordered[] = $next;
+    }
+
+    return $ordered;
+}
+
+/**
+ * @param array<string, array<string, mixed>> $areas
+ * @return array<string, string>
+ */
+function areaPackages(array $areas): array
+{
+    $packages = [];
+    foreach ($areas as $area => $definition) {
+        // CE has no package of its own; Adobe detects it by the base version.
+        $package = $area === 'CE' ? 'magento/magento2-base' : ($definition['composer_package'] ?? null);
+        if (!is_string($package) || $package === '') {
+            fail(sprintf('area "%s" has no composer_package', $area));
+        }
+        $packages[$area] = $package;
+    }
+
+    return $packages;
+}
+
+function lineName(string $area, string $version): string
+{
+    return $area === 'CE' ? $version : strtolower($area) . '-' . $version;
+}
+
+function monthlyId(string $registryId): string
+{
+    if (!preg_match('/^[0-9p]+-(\d{4}-\d{2}-\d{3})-[A-Za-z0-9]+$/', $registryId, $match)) {
+        fail(sprintf('%s: unexpected id format for a monthly patch', $registryId));
+    }
+
+    return $match[1];
+}
+
+/**
+ * @param array<string, mixed> $patch
+ */
+function monthlyLabel(array $patch): string
+{
+    $label = date('F Y', strtotime((string) $patch['released'])) . ' isolated';
+
+    return $patch['area'] === 'CE' ? $label : $label . ' (' . $patch['area'] . ')';
+}
+
+function vulnLabel(string $registryId): string
+{
+    $known = ['VULN-39341' => 'StyleSmuggler APSB26-146'];
+    foreach ($known as $vuln => $label) {
+        if (strpos($registryId, $vuln) !== false) {
+            return $label;
+        }
+    }
+
+    return preg_replace('/^.*?(VULN-\d+).*$/', '$1', $registryId);
+}
+
+/**
+ * @param array<string, mixed> $patch
+ */
+function description(array $patch): string
+{
+    return sprintf(
+        'Adobe %s, released %s. CVEs: %s.',
+        basename((string) $patch['file_name'], '.diff'),
+        $patch['released'],
+        implode(', ', $patch['cves']) ?: 'none listed'
+    );
+}
+
+function fail(string $message): never
+{
+    fwrite(STDERR, "sync-registry: $message\n");
+    exit(1);
+}

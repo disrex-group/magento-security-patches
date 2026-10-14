@@ -1,0 +1,173 @@
+diff --git a/vendor/magento/module-gift-registry/Controller/View.php b/vendor/magento/module-gift-registry/Controller/View.php
+index 32d921f66754..2429089dc43f 100644
+--- a/vendor/magento/module-gift-registry/Controller/View.php
++++ b/vendor/magento/module-gift-registry/Controller/View.php
+@@ -7,6 +7,12 @@
+ 
+ use Magento\Framework\Exception\NotFoundException;
+ use Magento\Framework\App\RequestInterface;
++use Magento\Framework\App\Action\Context;
++use Magento\Framework\Registry;
++use Magento\GiftRegistry\Model\Entity;
++use Magento\GiftRegistry\Model\EntityFactory;
++use Magento\Framework\App\ObjectManager;
++use Magento\GiftRegistry\Helper\Data;
+ 
+ /**
+  * Gift registry frontend controller
+@@ -14,21 +20,28 @@
+ abstract class View extends \Magento\Framework\App\Action\Action
+ {
+     /**
+-     * Core registry
+-     *
+-     * @var \Magento\Framework\Registry
++     * @var Registry
+      */
+     protected $_coreRegistry = null;
+ 
+     /**
+-     * @param \Magento\Framework\App\Action\Context $context
+-     * @param \Magento\Framework\Registry $coreRegistry
++     * @var Entity
++     */
++    protected $_entity;
++
++    /**
++     * @param Context $context
++     * @param Registry $coreRegistry
++     * @param EntityFactory|null $entityFactory
+      */
+     public function __construct(
+-        \Magento\Framework\App\Action\Context $context,
+-        \Magento\Framework\Registry $coreRegistry
++        Context $context,
++        Registry $coreRegistry,
++        ?EntityFactory $entityFactory = null
+     ) {
+         $this->_coreRegistry = $coreRegistry;
++        $entityFactory = $entityFactory ?? ObjectManager::getInstance()->get(EntityFactory::class);
++        $this->_entity = $entityFactory->create();
+         parent::__construct($context);
+     }
+ 
+@@ -42,6 +55,6 @@ public function __construct(
+     public function dispatch(RequestInterface $request)
+     {
+-        if (!$this->_objectManager->get(\Magento\GiftRegistry\Helper\Data::class)->isEnabled()) {
++        if (!$this->_objectManager->get(Data::class)->isEnabled()) {
+             throw new NotFoundException(__('Page not found.'));
+         }
+         return parent::dispatch($request);
+diff --git a/vendor/magento/module-gift-registry/Controller/View/AddToCart.php b/vendor/magento/module-gift-registry/Controller/View/AddToCart.php
+index 47d900ce5130..f403c1cfd710 100644
+--- a/vendor/magento/module-gift-registry/Controller/View/AddToCart.php
++++ b/vendor/magento/module-gift-registry/Controller/View/AddToCart.php
+@@ -7,36 +7,53 @@
+ namespace Magento\GiftRegistry\Controller\View;
+ 
+-class AddToCart extends \Magento\GiftRegistry\Controller\View
++use Magento\Framework\App\Action\HttpPostActionInterface;
++use Magento\Checkout\Model\Cart;
++use Magento\GiftRegistry\Model\Item;
++use Magento\GiftRegistry\Model\Item\Option;
++use Magento\Framework\Exception\LocalizedException;
++use Exception;
++use Psr\Log\LoggerInterface;
++
++class AddToCart extends \Magento\GiftRegistry\Controller\View implements HttpPostActionInterface
+ {
+     /**
+      * Add specified gift registry items to quote
+      *
+      * @return void
+      * @SuppressWarnings(PHPMD.CyclomaticComplexity)
+      */
+     public function execute()
+     {
++        $entity = $this->_entity->loadByUrlKey($this->getRequest()->getParam('id'));
++        if (!$entity->getId() || !$entity->getCustomerId() || !$entity->getTypeId() || !$entity->getIsActive()) {
++            $this->_forward('noroute');
++            return;
++        }
+         $items = $this->getRequest()->getParam('items');
+         if (!$items) {
+             $this->_redirect('*/*', ['_current' => true]);
+             return;
+         }
+-        /* @var \Magento\Checkout\Model\Cart */
+-        $cart = $this->_objectManager->get(\Magento\Checkout\Model\Cart::class);
++        $cart = $this->_objectManager->get(Cart::class);
+ 
+         $success = false;
+ 
+         try {
+             $count = 0;
+             foreach ($items as $itemId => $itemInfo) {
+-                $item = $this->_objectManager->create(\Magento\GiftRegistry\Model\Item::class)->load($itemId);
++                $item = $this->_objectManager->create(Item::class)->load($itemId);
+                 $optionCollection = $this->_objectManager->create(
+-                    \Magento\GiftRegistry\Model\Item\Option::class
++                    Option::class
+                 )->getCollection()->addItemFilter(
+                     $itemId
+                 );
+                 $item->setOptions($optionCollection->getOptionsByItem($item));
+-                if (!$item->getId() || $itemInfo['qty'] < 1 || $item->getQty() <= $item->getQtyFulfilled()) {
++                if (!$item->getId()
++                    || (int)$item->getEntityId() !== (int)$entity->getId()
++                    || !isset($itemInfo['qty'])
++                    || $itemInfo['qty'] < 1
++                    || $item->getQty() <= $item->getQtyFulfilled()
++                ) {
+                     continue;
+                 }
+                 $item->addToCart($cart, $itemInfo['qty']);
+@@ -48,11 +65,11 @@ public function execute()
+                 $success = false;
+                 $this->messageManager->addError(__('Please enter the quantity of items to add to cart.'));
+             }
+-        } catch (\Magento\Framework\Exception\LocalizedException $e) {
++        } catch (LocalizedException $e) {
+             $this->messageManager->addError(__($e->getMessage()));
+-        } catch (\Exception $e) {
++        } catch (Exception $e) {
+             $this->messageManager->addException($e, __('We can\'t add this item to your shopping cart right now.'));
+-            $this->_objectManager->get(\Psr\Log\LoggerInterface::class)->critical($e);
++            $this->_objectManager->get(LoggerInterface::class)->critical($e);
+         }
+         if (!$success) {
+             $this->_redirect('*/*', ['_current' => true]);
+diff --git a/vendor/magento/module-gift-registry/Controller/View/Index.php b/vendor/magento/module-gift-registry/Controller/View/Index.php
+index 549f3a186f58..7474c288f1da 100644
+--- a/vendor/magento/module-gift-registry/Controller/View/Index.php
++++ b/vendor/magento/module-gift-registry/Controller/View/Index.php
+@@ -7,6 +7,9 @@
+ namespace Magento\GiftRegistry\Controller\View;
+ 
+-class Index extends \Magento\GiftRegistry\Controller\View
++use Magento\Customer\Model\Customer;
++use Magento\Framework\App\Action\HttpGetActionInterface;
++
++class Index extends \Magento\GiftRegistry\Controller\View implements HttpGetActionInterface
+ {
+     /**
+      * View giftregistry list in 'My Account' section
+@@ -16,14 +19,13 @@ class Index extends \Magento\GiftRegistry\Controller\View
+     public function execute()
+     {
+-        $entity = $this->_objectManager->create(\Magento\GiftRegistry\Model\Entity::class);
+-        $entity->loadByUrlKey($this->getRequest()->getParam('id'));
++        $entity = $this->_entity->loadByUrlKey($this->getRequest()->getParam('id'));
+         if (!$entity->getId() || !$entity->getCustomerId() || !$entity->getTypeId() || !$entity->getIsActive()) {
+             $this->_forward('noroute');
+             return;
+         }
+ 
+-        /** @var \Magento\Customer\Model\Customer */
+-        $customer = $this->_objectManager->create(\Magento\Customer\Model\Customer::class);
++        /** @var Customer */
++        $customer = $this->_objectManager->create(Customer::class);
+         $customer->load($entity->getCustomerId());
+         $entity->setCustomer($customer);
+         $this->_coreRegistry->register('current_entity', $entity);
