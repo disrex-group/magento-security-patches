@@ -10,12 +10,26 @@ Every file in `patches/adobe/` comes byte for byte from `https://repo.magento.co
 |---|---|
 | 2.4.7-p10, 2.4.8-p5, 2.4.9 | Every monthly isolated patch from July 2026 on, in order, plus VULN-39341 (APSB26-146) |
 | 2.4.6-p15 | July and August. Adobe serves September and later only to Commerce licence holders |
-| Older patch levels from 2.4.4 on | VULN-39341 only. The monthly patches need the newest `-p` of the line, so upgrade first |
+| Older patch levels from 2.4.4 on | VULN-39341, plus SessionReaper (VULN-32437) below 2.4.8-p3, 2.4.7-p8 and 2.4.6-p13, and CosmicSting (VULN-27015 v2) below 2.4.6-p6 and 2.4.4-p9. The monthly patches need the newest `-p` of the line, so upgrade first |
 | Adobe Commerce | The Open Source patches above, plus the EE line for its `magento/product-enterprise-edition` version |
 | B2B | Also the B2B line for its `magento/extension-b2b` version (1.4.2-p10, 1.5.2-p5, 1.5.3) |
 | Mage-OS | Nothing. Mage-OS has no `magento/magento2-base`; it ships Adobe's fixes in its own releases |
 
 Each area is its own cumulative line, gated on the area's package, so an Open Source store never sees the EE or B2B patches. Adobe's EE and B2B patches only touch EE and B2B modules. Files Adobe serves only to Commerce licence holders are left out, and so is every later month of that line, since a chain may not have a gap. `bin/sync-registry` prints them as `skipped`.
+
+## Hand-picked hotfixes
+
+Adobe's registry starts in July 2026. Older emergency hotfixes for vulnerabilities that were exploited in the wild live in `patches/hotfixes/`, maintained by hand; `bin/sync-registry` never touches that directory.
+
+| Patch | Vulnerability | Applies to |
+|---|---|---|
+| `24x-VULN-32437-CE` | SessionReaper, CVE-2025-54236 (APSB25-88) | 2.4.4 to 2.4.4-p15, 2.4.5 to -p14, 2.4.6 to -p12, 2.4.7 to -p7, 2.4.8 to -p2 |
+| `246x-VULN-27015-CE` | CosmicSting, CVE-2024-34102 (APSB24-40) | 2.4.6 to 2.4.6-p5 |
+| `244x-VULN-27015-CE` | CosmicSting, CVE-2024-34102 (APSB24-40) | 2.4.4 to 2.4.4-p8 |
+
+CosmicSting leaks the encryption key, so a store that gets VULN-27015 must rotate its key afterwards; a key stolen before the patch keeps working until then. Version-based scanners such as eComscan keep reporting SessionReaper after the hotfix, because they only look at the version.
+
+To add a hotfix: download it from Adobe's own URL, take the patch file out of the zip unchanged, and add an entry to `patches/hotfixes/patches.json` with a `base` constraint on `magento/magento2-base` that covers exactly the versions Adobe lists. Put the URL and both sha256 values in the description, and test it with the installer's end-to-end check on a store of each version it covers.
 
 `composer magento-patches:status` on a store shows what it has and what it lacks.
 

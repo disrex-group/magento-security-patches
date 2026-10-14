@@ -1,0 +1,25 @@
+{
+    "patches": [
+        {
+            "id": "244x-VULN-27015-CE",
+            "label": "CosmicSting APSB24-40",
+            "source": "VULN-27015-2.4.4x_v2.composer.patch",
+            "base": { "magento/magento2-base": ">=2.4.4 <2.4.4-p9" },
+            "description": "Adobe VULN-27015 v2 for 2.4.4 to 2.4.4-p8, 2024-07. CVE-2024-34102. Includes the JWT hotfix AC-12485; rotate the encryption key after applying. From https://repo.magento.com/patch/VULN-27015-2-4-4x-v2-COMPOSER-patch.zip (zip sha256 8418342ce43592683180afd0a526d2196821e4e227b01158ac9272032c14a7b5, file sha256 65ae6c2343e28ba65d876a0f39ab0308574282879efc831489115c2426e18e66)."
+        },
+        {
+            "id": "246x-VULN-27015-CE",
+            "label": "CosmicSting APSB24-40",
+            "source": "VULN-27015-2.4.6x_v2.composer.patch",
+            "base": { "magento/magento2-base": ">=2.4.6 <2.4.6-p6" },
+            "description": "Adobe VULN-27015 v2 for 2.4.6 to 2.4.6-p5, 2024-07. CVE-2024-34102. Includes the JWT hotfix AC-12485; rotate the encryption key after applying. From https://repo.magento.com/patch/VULN-27015-2-4-6x-v2-COMPOSER-patch.zip (zip sha256 027eab44b87f1e0940e9aad8809fab38e3d9f5d105ae2879675309e1a39ad036, file sha256 fdfecf083431cb8259d6d6bf1fc779e2ac48944fd8d73bfa93ca62ab7134090a)."
+        },
+        {
+            "id": "24x-VULN-32437-CE",
+            "label": "SessionReaper APSB25-88",
+            "source": "VULN-32437_2.4.X.patch",
+            "base": { "magento/magento2-base": ">=2.4.4 <2.4.4-p16 || >=2.4.5 <2.4.5-p15 || >=2.4.6 <2.4.6-p13 || >=2.4.7 <2.4.7-p8 || >=2.4.8 <2.4.8-p3" },
+            "description": "Adobe VULN-32437, 2025-09. CVE-2025-54236, exploited in the wild. Version-based scanners keep flagging it until the store upgrades. From https://repo.magento.com/patch/VULN-32437-2-4-X-patch.zip (zip sha256 913adad637e2e557ea7220f77ceb390853d270717d03020a8d38709d0da252a4, file sha256 5acf887e0c3d5aafcc64b68759ac4e7b622f6bc7ef936dad46578839fbfad14f)."
+        }
+    ]
+}
