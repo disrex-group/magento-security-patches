@@ -26,7 +26,7 @@
         "docs": "https://disrex-group.github.io/magento-patch-installer/"
     },
     "require": {
-        "disrex/magento-patch-installer": "^0.1"
+        "disrex/magento-patch-installer": "^0.1 || ^0.2"
     },
     "conflict": {
         "disrex/stylesmuggler-adobe-patches": "*"

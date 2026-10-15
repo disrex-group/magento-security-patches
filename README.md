@@ -29,6 +29,8 @@ Adobe's registry starts in July 2026. Older emergency hotfixes for vulnerabiliti
 
 CosmicSting leaks the encryption key, so a store that gets VULN-27015 must rotate its key afterwards; a key stolen before the patch keeps working until then. Version-based scanners such as eComscan keep reporting SessionReaper after the hotfix, because they only look at the version.
 
+Installer 0.1 does not know the `optional` field and would apply such a patch on every store. The release that adds the first optional patch here must raise the installer requirement to `^0.2`.
+
 To add a hotfix: download it from Adobe's own URL, take the patch file out of the zip unchanged, and add an entry to `patches/hotfixes/patches.json` with a `base` constraint on `magento/magento2-base` that covers exactly the versions Adobe lists. Put the URL and both sha256 values in the description, and test it with the installer's end-to-end check on a store of each version it covers.
 
 `composer magento-patches:status` on a store shows what it has and what it lacks.
@@ -67,7 +69,7 @@ A patch that breaks something in one project can be switched off in that project
 }
 ```
 
-Commit `magento-patches.lock` after the first `composer update`; it lists every patch the project takes, so each merge request that bumps this package shows which patches arrive or change. Renovate runs Composer without plugins by default and then leaves that file as it was; on our self-hosted Renovate, `allowPlugins: true` lets the plugin rewrite it.
+Commit `magento-patches.lock` after the first `composer update`; it lists every patch the project takes, so each merge request that bumps this package shows which patches arrive or change. Renovate runs Composer without plugins and leaves that file as it was; set up the post-upgrade task from [CI and deploys](https://disrex-group.github.io/magento-patch-installer/ci.html#renovate) so it rewrites the lock.
 
 Remove other copies of the same patches when a project moves to this package: `disrex/stylesmuggler-adobe-patches`, Adobe patch files in `extra.patches`, and a `vendor/bin/magento-patches apply MCLOUD-...` script for the monthly releases.
 
